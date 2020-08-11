@@ -1,0 +1,4 @@
+*.nc
+run.py
+.vscode/
+.ipynb_checkpoints/
