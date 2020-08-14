@@ -1,12 +1,12 @@
 functions {
-    real richards(real t, real alpha, real beta, real nu, real S) {
-        return S / (1 + nu * exp(-beta * (t - alpha)))^(1 / nu);
+    real richards(real t, real alpha, real beta, real gamma, real S) {
+        return S / (1 + gamma * exp(-beta * (t - alpha)))^(1 / gamma);
     }
     
-    real d_richards(real t, real alpha, real beta, real nu, real S) {
+    real d_richards(real t, real alpha, real beta, real gamma, real S) {
         real r;
-        r = richards(t, alpha, beta, nu, S);
-        return (beta / nu) * r * (1 - (r/S)^nu);
+        r = richards(t, alpha, beta, gamma, S);
+        return (beta / gamma) * r * (1 - (r/S)^gamma);
     }
     
     real neg_binomial_2_safe_rng(real eta, real phi) {
@@ -20,12 +20,12 @@ functions {
 }
 
 data {
-    int T;
-    int N;
-    int y[T, N];
-    int<lower=0, upper=1> is_observed[T, N];
-    int pop[N];
-    int sim_T;
+    int n_dates;
+    int n_states;
+    int y[n_dates, n_states];
+    int<lower=0, upper=1> is_observed[n_dates, n_states];
+    int pop[n_states];
+    int n_future;
 }
 
 transformed data {
@@ -33,55 +33,77 @@ transformed data {
     eps = 1e-5;
 }
 parameters {
-    vector[4] mu_theta;
-    vector<lower=0>[4] sigma_theta;
-    vector[4] log_theta[N];
+    // Alphas
+    real mu_alpha;
+    real<lower=0> sigma_alpha;
+    real log_alpha[n_states];
+
+    // Betas
+    real mu_beta;
+    real<lower=0> sigma_beta;
+    real log_beta[n_states];
+
+    // Gammas
+    real mu_gamma;
+    real<lower=0> sigma_gamma;
+    real log_gamma[n_states];
+
+    // S
+    real mu_S;
+    real<lower=0> sigma_S;
+    real logit_S[n_states];
+
+    // Phi
     real<lower=0> mu_phi;
     real<lower=0> sigma_phi;
-    real<lower=0> phi[N];
-    real<lower=-0.8, upper=0.8> dow[6]; // use day 1 as baseline, same for all states
-    
+    real<lower=0> phi[n_states];
+
+    // Day of the week effect
+    real<lower=-0.8, upper=0.8> dow[6]; // use day 1 as baseline, same for all state
 }
 
 transformed parameters {
-    real<lower=0> alpha[N];
-    real<lower=0> beta[N];
-    real<lower=0> nu[N];
-    real<lower=0, upper=1> S[N];
+    real<lower=0> alpha[n_states];
+    real<lower=0> beta[n_states];
+    real<lower=0> gamma[n_states];
+    real<lower=0, upper=1> S[n_states];
     
-    for (n in 1:N) {
-        alpha[n] = exp(log_theta[n, 1]);
-        beta[n] = exp(log_theta[n, 2]);
-        nu[n] = exp(log_theta[n, 3]);
-        S[n] = inv_logit(log_theta[n, 4]);
+    for (n in 1:n_states) {
+        alpha[n] = exp(log_alpha[n]);
+        beta[n] = exp(log_beta[n]);
+        gamma[n] = exp(log_gamma[n]);
+        S[n] = inv_logit(logit_S[n]);
     }
 }
 
 model {
     // Hyperpriors
-    mu_theta[1] ~ normal(5, 1);
-    mu_theta[2] ~ normal(-3.5, 1);
-    mu_theta[3] ~ normal(0, 1);
-    mu_theta[4] ~ normal(-5, 2);
-    for (k in 1:4) {
-        sigma_theta[k] ~ cauchy(0, 2.5);
-    }
+    mu_alpha ~ normal(5, 1);
+    mu_beta ~ normal(-3.5, 1);
+    mu_gamma ~ normal(0, 1);
+    mu_S ~ normal(-5, 2);
     mu_phi ~ normal(20, 20);
+
+    sigma_alpha ~ student_t(5, 0, 2.5);
+    sigma_beta ~ student_t(5, 0, 2.5);
+    sigma_gamma ~ student_t(5, 0, 2.5);
+    sigma_S ~ student_t(5, 0, 2.5);
     sigma_phi ~ normal(5, 10);
     
     
-    for (n in 1:N) {
+    for (n in 1:n_states) {
         // Priors
-        for (k in 1:4) {
-            log_theta[n, k] ~ normal(mu_theta[k], sigma_theta[k]);
-        }
+        log_alpha[n] ~ normal(mu_alpha, sigma_alpha);
+        log_beta[n] ~ normal(mu_beta, sigma_beta);
+        log_gamma[n] ~ normal(mu_gamma, sigma_gamma);
+        logit_S[n] ~ normal(mu_S, sigma_S);
         phi[n] ~ normal(mu_phi, sigma_phi);
         
         // Likelihood
-        for (t in 1:T) {
+        for (t in 1:n_dates) {
             if (is_observed[t, n]) {
                 real mu;
-                mu =  pop[n] * d_richards(t, alpha[n], beta[n], nu[n], S[n]);
+                mu =  pop[n] * d_richards(t, alpha[n], beta[n], gamma[n], S[n]);
                 if (t % 7) { // for days 1, 2, 3, 4, 5 and 6
                     mu *= (1 + dow[t % 7]);
                 }
@@ -92,13 +114,13 @@ model {
 }
 
 generated quantities {
-    real y_pred[T + sim_T, N];
-    real y_trend[T + sim_T, N];
-    for (n in 1:N) {
-        for (t in 1:T + sim_T) {
+    real y_pred[n_dates + n_future, n_states];
+    real y_trend[n_dates + n_future, n_states];
+    for (n in 1:n_states) {
+        for (t in 1:n_dates + n_future) {
             real mu;
-            mu =  pop[n] * d_richards(t, alpha[n], beta[n], nu[n], S[n]);
-            y_trend[t, n] = mu;
+            mu =  pop[n] * d_richards(t, alpha[n], beta[n], gamma[n], S[n]);
+            y_trend[t, n] = neg_binomial_2_safe_rng(eps + mu, phi[n]); // Trend without the day of week effect
             if (t % 7) { // for days 1, 2, 3, 4, 5 and 6
                 mu *= (1 + dow[t % 7]);
             }
