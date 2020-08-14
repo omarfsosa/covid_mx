@@ -83,7 +83,7 @@ def save_custom_forecast_plots(stan_data, stan_coordinates, samples):
         plt.subplots_adjust(hspace=0.2, wspace=0.1)
         for ax, state in zip(axes.flatten(), page):
             stan_index = stan_coordinates["state"].index(state)
-            state_samples = samples.extract()["y_trend"][..., stan_index]
+            state_samples = samples.extract()["y_pred"][..., stan_index]
             ax.axvline(
                 x=stan_coordinates["date"][-1],
                 linestyle="--",
