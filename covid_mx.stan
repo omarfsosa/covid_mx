@@ -8,6 +8,18 @@ functions {
         r = richards(t, alpha, beta, gamma, S);
         return (beta / gamma) * r * (1 - (r/S)^gamma);
     }
+
+    real inverted_richards(real t, real alpha, real beta, real gamma, real S) {
+        return S - richards(2*alpha - t, alpha, beta, gamma, S);
+    }
+
+    real d_inv_richards(real t, real alpha, real beta, real gamma, real S) {
+        real g;
+        real k;
+        g = inverted_richards(t, alpha, beta, gamma, S);
+        k = S - g;
+        return beta * k * (1 - (k / S)^gamma);
+    }
     
     real neg_binomial_2_safe_rng(real eta, real phi) {
         real gamma_rate = gamma_rng(phi, phi / eta);
@@ -24,13 +36,20 @@ data {
     int n_states;
     int y[n_dates, n_states];
     int<lower=0, upper=1> is_observed[n_dates, n_states];
+    int dates[n_dates];
     int pop[n_states];
+    
+    // Dates to forecast
     int n_future;
 }
 
 transformed data {
     real eps;
+    int forecast_dates[dates[n_dates] + n_future];
     eps = 1e-5;
+    for (d in 1:(dates[n_dates] + n_future)) {
+        forecast_dates[d] = d;
+    }
 }
 parameters {
     // Alphas
@@ -59,7 +78,7 @@ parameters {
     real<lower=0> phi[n_states];
 
     // Day of the week effect
-    real<lower=-0.8, upper=0.8> dow[6]; // use day 1 as baseline, same for all state
+    // real<lower=-0.8, upper=0.8> dow[6]; // use day 1 as baseline, same for all state
 }
 
 transformed parameters {
@@ -77,19 +96,18 @@ transformed parameters {
 }
 
 model {
-    // Hyperpriors
-    mu_alpha ~ normal(5, 1);
-    mu_beta ~ normal(-3.5, 1);
-    mu_gamma ~ normal(0, 1);
-    mu_S ~ normal(-5, 2);
+    // Hyperpriors for inverted richards model
+    mu_alpha ~ normal(5.2, 1);
+    mu_beta ~ normal(-3, 1);
+    mu_gamma ~ normal(1.6, 1);
+    mu_S ~ normal(-6, 2);
     mu_phi ~ normal(20, 20);
 
-    sigma_alpha ~ student_t(5, 0, 2.5);
-    sigma_beta ~ student_t(5, 0, 2.5);
-    sigma_gamma ~ student_t(5, 0, 2.5);
-    sigma_S ~ student_t(5, 0, 2.5);
-    sigma_phi ~ normal(5, 10);
-    
+    sigma_alpha ~ student_t(7, 0, 2.5);
+    sigma_beta ~ student_t(7, 0, 2.5);
+    sigma_gamma ~ student_t(7, 0, 2.5);
+    sigma_S ~ student_t(7, 0, 2.5);
+    sigma_phi ~ normal(20, 10);
     
     for (n in 1:n_states) {
         // Priors
@@ -103,10 +121,10 @@ model {
         for (t in 1:n_dates) {
             if (is_observed[t, n]) {
                 real mu;
-                mu =  pop[n] * d_richards(t, alpha[n], beta[n], gamma[n], S[n]);
-                if (t % 7) { // for days 1, 2, 3, 4, 5 and 6
-                    mu *= (1 + dow[t % 7]);
-                }
+                mu =  pop[n] * d_inv_richards(dates[t], alpha[n], beta[n], gamma[n], S[n]);
+                // if (t % 7) { // for days 1, 2, 3, 4, 5 and 6
+                //     mu *= (1 + dow[t % 7]);
+                // }
                 y[t, n] ~ neg_binomial_2(eps + mu, phi[n]);
             }
         }
@@ -114,16 +132,14 @@ model {
 }
 
 generated quantities {
-    real y_pred[n_dates + n_future, n_states];
-    real y_trend[n_dates + n_future, n_states];
+    real y_pred[dates[n_dates] + n_future, n_states];
     for (n in 1:n_states) {
-        for (t in 1:n_dates + n_future) {
+        for (t in 1:(dates[n_dates] + n_future)) {
             real mu;
-            mu =  pop[n] * d_richards(t, alpha[n], beta[n], gamma[n], S[n]);
-            y_trend[t, n] = neg_binomial_2_safe_rng(eps + mu, phi[n]); // Trend without the day of week effect
-            if (t % 7) { // for days 1, 2, 3, 4, 5 and 6
-                mu *= (1 + dow[t % 7]);
-            }
+            mu =  pop[n] * d_inv_richards(forecast_dates[t], alpha[n], beta[n], gamma[n], S[n]);
+            // if (t % 7) { // for days 1, 2, 3, 4, 5 and 6
+            //     mu *= (1 + dow[t % 7]);
+            // }
             y_pred[t, n] = neg_binomial_2_safe_rng(eps + mu, phi[n]);
         }
     }
